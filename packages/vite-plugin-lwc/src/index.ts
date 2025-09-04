@@ -1,6 +1,5 @@
 import path from "node:path";
-import rollup from "rollup";
-import type { StringFilter, ObjectHook, TransformPluginContext } from "rollup";
+import type { StringFilter, ObjectHook, TransformResult, TransformPluginContext } from "rollup";
 import patch from "./patch.ts";
 import lwc from "./lwc.ts";
 import alias from "./alias.ts";
@@ -10,17 +9,22 @@ import type { ViteLwcOptions } from "./types.ts";
 import { normalizeOptions } from "./options.ts";
 import { IMPLICIT_DEFAULT_CSS_PATH, IMPLICIT_DEFAULT_HTML_PATH } from "./constants.ts";
 
-function transformOverride(
-  transform: { handler: Function },
-  viteOptions: ViteLwcOptions
-): ObjectHook<(this: TransformPluginContext, code: string, id: string, options?: {
+type TransformOverride = ObjectHook<(this: TransformPluginContext, code: string, id: string, options?: {
   ssr?: boolean;
-}) => Promise<rollup.TransformResult> | rollup.TransformResult, {
+}) => Promise<TransformResult> | TransformResult, {
+  handler(code: string, id: string, options: {
+    ssr?: boolean | undefined;
+  }): undefined,
   filter?: {
     id?: StringFilter;
     code?: StringFilter;
   };
-}> {
+}>
+
+function transformOverride(
+  transform: TransformOverride | null | undefined,
+  viteOptions: ViteLwcOptions
+): TransformOverride {
   // TODO: add support for `npm` modules. Currently relies on `dir|dirs` config
   const moduleDirs = viteOptions.modules?.reduce<string[]>((acc, item) => {
     const _item = (item as { dir?: string, dirs?: string })
@@ -36,7 +40,7 @@ function transformOverride(
 
   return {
     ...transform,
-    async handler(code: string, id: string, options: {
+    handler(code: string, id: string, options: {
       ssr?: boolean | undefined;
     } | undefined) {
       if (isLwcCss(id, moduleDirs)) {
@@ -44,9 +48,9 @@ function transformOverride(
          * These imports are handled by the LWC engine and
          * should be ignored by `vite:css`/`vite:css-post`.
          */
-        return undefined
+        return null
       } else {
-        return transform.handler?.call(this, code, id, options)
+        return transform?.handler?.call(this, code, id, options)
       }
     },
   }
@@ -99,13 +103,13 @@ export default (options: ViteLwcOptions = {}): Plugin[] => {
     patch({
       "vite:css": (p) => {
         p.transform = transformOverride(
-          (p.transform as unknown as { handler: Function; }),
+          p.transform,
           options
         );
       },
       "vite:css-post": (p) => {
         p.transform = transformOverride(
-          (p.transform as unknown as { handler: Function; }),
+          p.transform,
           options
         );
       },
